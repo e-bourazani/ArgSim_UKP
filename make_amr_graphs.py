@@ -2,41 +2,81 @@ import json
 from pathlib import Path
 import amrlib
 
-DATA_DIR = Path("/UKP_ASPECT/data/processed")  # folder containing train/dev/test jsonl files
-SPLITS = ["train", "dev", "test"]  # the jsonl files of the different splits
-MODEL_DIR = "model_stog"  # full model path
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data" / "processed"
+SPLITS = ["dev"]  # for quick testing
+# SPLITS = ["train", "dev", "test"]
 
-# Load AMR model
-stog = amrlib.load_stog_model(model_dir=MODEL_DIR)
+MODEL_DIR = BASE_DIR / "models" / "model_stog" / "model_parse_t5-v0_1_0"
+stog = amrlib.load_stog_model(str(MODEL_DIR))
 
-def add_amr_to_jsonl(jsonl_file: Path):
-    updated_lines = []
+BATCH_SIZE = 50
 
-    # Read existing data and parse AMR
-    with open(jsonl_file, "r", encoding="utf-8") as fin:
+def process_jsonl(jsonl_file: Path):
+    output_file = jsonl_file.with_suffix(".amr.jsonl")
+
+    batch_sent1 = []
+    batch_sent2 = []
+    batch_rows = []
+
+    with open(jsonl_file, "r", encoding="utf-8") as fin, \
+         open(output_file, "w", encoding="utf-8") as fout:
+
         for line in fin:
             row = json.loads(line)
-            sent1 = row["sentence_1"]
-            sent2 = row["sentence_2"]
+            batch_rows.append(row)
+            batch_sent1.append(row["sentence_1"])
+            batch_sent2.append(row["sentence_2"])
 
-            # Parse both sentences
-            graphs = stog.parse_sents([sent1, sent2])
-            row["amr_1"] = graphs[0] if len(graphs) > 0 else None
-            row["amr_2"] = graphs[1] if len(graphs) > 1 else None
+            # When reaching batch size, parse in bulk
+            if len(batch_rows) >= BATCH_SIZE:
+                write_batch(batch_rows, batch_sent1, batch_sent2, fout)
+                print(f"Processed {len(batch_rows)} lines...")
 
-            updated_lines.append(row)
+                batch_rows = []
+                batch_sent1 = []
+                batch_sent2 = []
 
-    # Overwrite the same file with added AMR entries
-    with open(jsonl_file, "w", encoding="utf-8") as fout:
-        for row in updated_lines:
-            fout.write(json.dumps(row) + "\n")
+        # process remaining data
+        if batch_rows:
+            write_batch(batch_rows, batch_sent1, batch_sent2, fout)
 
-    print(f"Updated file with AMR graphs: {jsonl_file}")
+    print(f"Created: {output_file}")
 
-# Process all splits
-for split in SPLITS:
-    jsonl_file = DATA_DIR / f"{split}.jsonl"
-    if jsonl_file.exists():
-        add_amr_to_jsonl(jsonl_file)
-    else:
-        print(f"File not found: {jsonl_file}")
+
+def write_batch(rows, sents1, sents2, fout):
+    # Combine into one list of sentences
+    combined = sents1 + sents2
+
+    try:
+        amrs = stog.parse_sents(combined)
+    except Exception as e:
+        print("AMR parsing failed for a batch:", e)
+        # fallback to line-by-line parsing
+        amrs = []
+        for s in combined:
+            try:
+                g = stog.parse_sents([s])[0]
+            except:
+                g = None
+            amrs.append(g)
+
+    # split back into pairs
+    mid = len(amrs) // 2
+    amrs1 = amrs[:mid]
+    amrs2 = amrs[mid:]
+
+    # write to output safely
+    for row, amr1, amr2 in zip(rows, amrs1, amrs2):
+        row["amr_1"] = amr1
+        row["amr_2"] = amr2
+        fout.write(json.dumps(row) + "\n")
+
+
+if __name__ == "__main__":
+    for split in SPLITS:
+        jsonl_file = DATA_DIR / f"{split}.jsonl"
+        if jsonl_file.exists():
+            process_jsonl(jsonl_file)
+        else:
+            print(f"File not found: {jsonl_file}")
