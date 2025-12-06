@@ -4,8 +4,7 @@ import amrlib
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data" / "processed"
-SPLITS = ["dev"]  # for quick testing
-# SPLITS = ["train", "dev", "test"]
+INPUT_FILE = DATA_DIR / "UKP_ASPECT.jsonl"
 
 MODEL_DIR = BASE_DIR / "models" / "model_stog" / "model_parse_t5-v0_1_0"
 stog = amrlib.load_stog_model(str(MODEL_DIR))
@@ -74,9 +73,8 @@ def write_batch(rows, sents1, sents2, fout):
 
 
 if __name__ == "__main__":
-    for split in SPLITS:
-        jsonl_file = DATA_DIR / f"{split}.jsonl"
-        if jsonl_file.exists():
-            process_jsonl(jsonl_file)
-        else:
-            print(f"File not found: {jsonl_file}")
+    if INPUT_FILE.exists():
+        print(f"Processing {INPUT_FILE} ...")
+        process_jsonl(INPUT_FILE)
+    else:
+        print(f"File not found: {INPUT_FILE}")
